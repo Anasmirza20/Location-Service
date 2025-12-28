@@ -24,29 +24,55 @@ LocationTrackor is a reliable, offline-first Android application designed for co
 
 ## Project Architecture
 
-The project is structured into several layers to ensure separation of concerns and maintainability:
+The project follows **Clean Architecture** and **MVVM** principles to ensure a clear separation of concerns, testability, and maintainability.
 
-### 1. UI Layer (`ui` package)
-Built entirely with **Jetpack Compose**.
-- **MainActivity:** Serves as the entry point and handles the complex permission flow required for location services.
-- **LocationViewModel:** Manages the UI state, reacts to connectivity changes, and interacts with the repository. It uses `StateFlow` to provide a reactive stream of data to the UI.
+### Architecture Layers
 
-### 2. Data Layer (`data` package)
-- **Repository (`LocationRepository`):** The single source of truth for the app. It coordinates data flow between the local Room database and the remote API.
-- **Local (`data.local`):** Contains the Room database definition, entities, and DAOs.
-- **Remote (`data.remote`):** Contains Retrofit interfaces and data transfer objects (DTOs) for API communication.
+1.  **UI Layer (`ui` package)**: 
+    *   Built with **Jetpack Compose** for a modern, reactive UI.
+    *   **MainActivity**: Manages the application lifecycle and the complex permission acquisition flow.
+    *   **LocationViewModel**: Acts as a state holder, exposing `StateFlow` to the UI and reacting to repository updates.
 
-### 3. Service Layer (`service` package)
-- **LocationTrackingService:** A Foreground Service that handles the actual location collection using the `FusedLocationProviderClient`. It runs independently of the UI.
+2.  **Domain/Data Layer (`data` package)**:
+    *   **LocationRepository**: The central hub that abstracts data sources. It manages the flow between the local database and the remote API.
+    *   **Local Data (`data.local`)**: Uses Room persistence library to store location logs.
+    *   **Remote Data (`data.remote`)**: Uses Retrofit for API communication.
 
-### 4. Worker Layer (`worker` package)
-- **SyncWorker:** A Hilt-enabled CoroutineWorker that handles the batch uploading of unsynced location logs. It's designed to be efficient, using network constraints to save battery and data.
+3.  **Service Layer (`service` package)**:
+    *   **LocationTrackingService**: A Foreground Service that runs independently of the UI. It uses the `FusedLocationProviderClient` for high-accuracy location tracking.
+
+4.  **Worker Layer (`worker` package)**:
+    *   **SyncWorker**: Handles background synchronization using WorkManager, ensuring data is uploaded even if the app is closed.
+
+## Offline Storage
+
+Offline-first capability is a core pillar of LocationTrackor.
+
+-   **Database**: Uses **Room** with a table named `location_logs`.
+-   **Persistence**: Every captured location is immediately saved as a `LocationEntity` with an `isSynced` flag set to `false`.
+-   **Data Integrity**: By persisting data before attempting to sync, the app ensures that no location point is lost due to network failure, app crashes, or device reboots.
+
+## Sync Mechanism
+
+The synchronization process is designed to be robust and battery-efficient:
+
+1.  **Trigger**: A sync is attempted every time a new location is saved or when the service starts.
+2.  **WorkManager**: Leverages Android's `WorkManager` to handle `SyncWorker`.
+3.  **Constraints**: Syncing only occurs when a valid **Internet Connection** is detected (`NetworkType.CONNECTED`).
+4.  **Batching**: The worker retrieves all unsynced records from Room and sends them as a single batch to the server.
+5.  **Reliability**: Uses **Exponential Backoff** policy for retries in case of API failures.
+6.  **Atomic Updates**: Records are marked as `isSynced = true` only after a successful 2xx response from the server.
 
 ## API Contract
 
-The app synchronizes data by sending a JSON array of location objects to the configured endpoint.
+The app communicates with a backend via a POST request.
 
-**Payload Example:**
+-   **Endpoint**: `/posts` (Configurable in `LocationApi.kt`)
+-   **Method**: `POST`
+-   **Content-Type**: `application/json`
+-   **Payload**: A JSON array of location objects.
+
+**Example Payload:**
 ```json
 [
   {
@@ -59,6 +85,14 @@ The app synchronizes data by sending a JSON array of location objects to the con
   }
 ]
 ```
+
+## Assumptions and Limitations
+
+-   **Employee Identification**: Currently, `employeeId` is hardcoded as `"EMP001"`. In a production environment, this would be retrieved from a session or user profile.
+-   **Location Provider**: Relies on **Google Play Services** (Fused Location Provider). Devices without Play Services are not supported.
+-   **Permissions**: Continuous background tracking requires `ACCESS_BACKGROUND_LOCATION`, which must be manually granted by the user in system settings.
+-   **Battery Optimization**: For reliable long-term tracking, users must manually whitelist the app from battery optimizations (a prompt is provided).
+-   **Sync Frequency**: Syncing is triggered per-location capture but managed by WorkManager's scheduling logic, which might vary based on OS battery-saving states.
 
 ## Setup & Implementation Details
 
